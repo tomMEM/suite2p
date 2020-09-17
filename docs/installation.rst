@@ -5,14 +5,14 @@ Install an `Anaconda`_ distribution of Python -- Choose **Python 3.x**
 and your operating system. Note you might need to use an anaconda prompt
 if you did not add anaconda to the path.
 
-1. Download the ``environment.yml`` file from the repository
+1. Download the suite2p repository from GitHub using Git:  ``git clone https://github.com/MouseLand/suite2p``
 2. Open an anaconda prompt / command prompt with ``conda`` for **python
    3** in the path
-3. Run ``conda env create -f environment.yml``
-4. To activate this new environment, run ``conda activate suite2p``
-5. You should see ``(suite2p)`` on the left side of the terminal line.
-   Now run ``pip install suite2p --upgrade`` to make sure suite2p is installed.
-6. Now run ``python -m suite2p`` and you're all set.
+3. Change the current directory to the suite2p folder: ``cd suite2p``
+4. Run ``conda env create -f environment.yml``
+5. To activate this new environment, run ``conda activate suite2p``. Afterwards, You should see ``(suite2p)`` on the left side of the terminal line.
+6. Install suite2p into this environment: ``pip install suite2p``
+7. Now run ``suite2p`` and you're all set.
 
 If you have an older ``suite2p`` environment you can remove it with
 ``conda env remove -n suite2p`` before creating a new one.
@@ -31,16 +31,16 @@ environment:
 
 **Common issues**
 
-If when running ``python -m suite2p``, you receive the error:
+If when running ``suite2p``, you receive the error:
 ``No module named PyQt5.sip``, then try uninstalling and reinstalling
 pyqt5
 
 ::
 
    pip uninstall pyqt5 pyqt5-tools
-   pip install pyqt5 pyqt5-tools pyqt5.sip
+   pip install suite2p
 
-If when running ``python -m suite2p``, you receive an error associated
+If when running ``suite2p``, you receive an error associated
 with **matplotlib**, try upgrading it:
 
 ::
@@ -64,9 +64,9 @@ Dependencies
 -  `numpy`_ (>=1.13.0)
 -  `scipy`_
 -  `h5py`_
--  `scikit-image`_
 -  `scikit-learn`_
 -  `scanimage-tiff-reader`_
+-  `tifffile`_
 -  `natsort`_
 -  `matplotlib`_ (not for plotting (only using hsv_to_rgb and colormap
    function), should not conflict with PyQt5)
@@ -77,7 +77,7 @@ Dependencies
 .. _numpy: http://www.numpy.org/
 .. _scipy: https://www.scipy.org/
 .. _h5py: https://www.h5py.org/
-.. _scikit-image: https://scikit-image.org/
+.. _tifffile: https://pypi.org/project/tifffile/ 
 .. _scikit-learn: http://scikit-learn.org/stable/
 .. _scanimage-tiff-reader: http://scanimage.gitlab.io/ScanImageTiffReaderDocs/
 .. _natsort: https://natsort.readthedocs.io/en/master/

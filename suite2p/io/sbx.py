@@ -1,7 +1,9 @@
+import os
+
 import numpy as np
-from natsort import natsorted
-import glob, os, json
-from . import utils
+
+from .utils import init_ops, find_files_open_binaries
+
 
 def sbx_get_info(sbxfile):
     ''' 
@@ -10,7 +12,7 @@ def sbx_get_info(sbxfile):
     '''
     matfile = os.path.splitext(sbxfile)[0] + '.mat'
     if not os.path.exists(matfile):
-        raise('Metadata not found: {0}'.format(matfile))
+        raise FileNotFoundError('Metadata not found: {0}'.format(matfile))
     from scipy.io import loadmat
     info = loadmat(matfile,squeeze_me=True,struct_as_record=False)
     return info['info']
@@ -31,15 +33,17 @@ def sbx_get_shape(sbxfile):
         chan = 1
     elif chan == 3:
         chan = 1
-    max_idx = os.path.getsize(sbxfile)/nrows/ncols/chan/2
+    max_idx = fsize/nrows/ncols/chan/2
     if max_idx != info.config.frames:
-        raise(Warning('sbx filesize doesnt match mat [{0},{1}]'.format(
-                    max_idx,
-                    info.config.frames)))
+        print('SBX filesize doesnt match accompaning MAT [{0},{1}]. Check recording.'.format(
+            max_idx,
+            info.config.frames))
     nplanes = 1
     if not isinstance(info.otwave,int):
         if len(info.otwave) and info.volscan:
             nplanes = len(info.otwave)
+    # make sure that if there are multiple planes it works regardless of the number of recorded  frames
+    max_idx = np.floor((max_idx/nplanes)) * nplanes
     return (int(chan),int(ncols),int(nrows),int(max_idx)),nplanes
 
 def sbx_memmap(filename,plane_axis=True):
@@ -86,32 +90,35 @@ def sbx_to_binary(ops,ndeadcols = -1):
 
     Returns
     -------
-        ops1 : list of dictionaries
-            'Ly', 'Lx', ops1[j]['reg_file'] or ops1[j]['raw_file'] is created binary
+        ops : dictionary of first plane
+            'Ly', 'Lx', ops['reg_file'] or ops['raw_file'] is created binary
 
     """
 
-    ops1 = utils.init_ops(ops)
+    ops1 = init_ops(ops)
     # the following should be taken from the metadata and not needed but the files are initialized before...
     nplanes = ops1[0]['nplanes']
     nchannels = ops1[0]['nchannels']
     # open all binary files for writing
-    ops1, sbxlist, reg_file, reg_file_chan2 = utils.find_files_open_binaries(ops1)
-    print(sbxlist)
+    ops1, sbxlist, reg_file, reg_file_chan2 = find_files_open_binaries(ops1)
     iall = 0
     for j in range(ops1[0]['nplanes']):
         ops1[j]['nframes_per_folder'] = np.zeros(len(sbxlist), np.int32)
-    print(sbxlist)
     ik = 0
     if 'sbx_ndeadcols' in ops1[0].keys():
         ndeadcols = int(ops1[0]['sbx_ndeadcols'])
     if ndeadcols == -1:
-        # compute dead cols from the first file
-        tmpsbx = sbx_memmap(sbxlist[0])
-        colprofile = np.mean(tmpsbx[0][0][0],axis = 0)
-        ndeadcols = np.argmax(np.diff(colprofile)) + 1
-        print('Removing {0} dead columns while loading sbx data.'.format(ndeadcols))
-        del tmpsbx
+        sbxinfo = sbx_get_info(sbxlist[0])
+        if sbxinfo.scanmode == 1:
+            # do not remove dead columns in unidirectional scanning mode
+            ndeadcols = 0
+        else:
+            # compute dead cols from the first file
+            tmpsbx = sbx_memmap(sbxlist[0])
+            colprofile = np.mean(tmpsbx[0][0][0],axis = 0)
+            ndeadcols = np.argmax(np.diff(colprofile)) + 1
+            del tmpsbx
+            print('Removing {0} dead columns while loading sbx data.'.format(ndeadcols))
     ops1[0]['sbx_ndeadcols'] = ndeadcols
     
     for ifile,sbxfname in enumerate(sbxlist):
@@ -173,4 +180,4 @@ def sbx_to_binary(ops,ndeadcols = -1):
         reg_file[j].close()
         if nchannels>1:
             reg_file_chan2[j].close()
-    return ops1
+    return ops1[0]

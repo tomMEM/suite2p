@@ -30,9 +30,9 @@ needs the reg_file, Ly, Lx, and nimg_init parameters):
 
 .. code:: python
 
-   from suite2p import register
+   from suite2p.registration import register
 
-   refImg = register.pick_init(ops)
+   refImg = register.pick_initial_reference(ops)
 
 Here is an example reference image on the right, compared to just taking
 the average of a random subset of frames (on the left):
@@ -160,10 +160,33 @@ to upsample create the final shifts:
 
 We then use bilinear interpolation to warp the frame using these shifts.
 
-
-
 Metrics for registration quality
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The inputs required for PC metrics are the following fields in ops:
+``nframes``, ``Ly``, ``Lx``, ``reg_file``. Your movie must have at least 1500 frames in each plane
+for the metrics to be calculated. You can run on the red channel (ops['reg_file_chan2']) if use_red=True.
+The outputs saved from the PC metrics are ``ops['regDX']``, ``ops['tPC']`` and ``ops['regPC']``.
+
+::
+   
+   from suite2p.registration import metrics 
+
+   ops = metrics.get_pc_metrics(ops, use_red=False)
+   
+``ops['tPC']`` are the time courses of each of the principal 
+components of the registered movie. Note 
+the time-course is not the entire movie, it's only the subset of frames used to 
+compute the PCs (2000-5000 frames equally sampled throughout the movie). 
+
+``ops['regPC']`` are computed from the spatial principal components of the
+registered movie. ``ops['regPC'][0,0,:,:]`` is the average of the top
+500 frames of the 1st PC, ``ops['regPC'][1,0,:,:]`` is the average of
+the bottom 500 frames of the 1st PC. ``ops['regDX']`` quantifies the
+movement in each PC (``iPC``) by registering ``ops['regPC'][0,iPC,:,:]``
+and ``ops['regPC'][1,iPC,:,:]`` to the reference image ``ops['refImg']`` (if available, 
+if not the mean of all the frames is used as the reference image)
+and computing the registration shifts.
 
 Here's a twitter `thread <https://twitter.com/marius10p/status/1051494533786193920>`_ 
 with multiple examples.
@@ -171,3 +194,57 @@ with multiple examples.
 .. _Phase-correlation: 
 .. _here: 
 .. |bad-refImg| image:: badrefImg.PNG
+
+CLI Script
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Suite2p provides a CLI (Command-Line Interface) script that calculates the registration metrics
+for a given input tif and outputs some statistics on those metrics. You can use this script to
+determine the quality of registration and tune your registration parameters (e.g: determine if
+non-rigid registration is necessary).
+
+To run the script, use the following command:
+
+.. prompt:: bash
+
+    reg_metrics <INSERT_OPS_DATA_PATH> # Add --tiff_list <INSERT_INPUT_TIF_FILENAME_HERE>.tif to select a subset of tifs
+
+Once you run the ``reg_metrics`` command, registration will be performed for the input file with default
+ops parameters and an output similar to the following will be shown:
+
+::
+
+    # Average NR refers to the average nonrigid offsets of the blocks for a PC
+    # Max NR refers to the max nonrigid offsets of the blocks for a PC
+    Plane 0:
+    Avg_Rigid: 0.000000     Avg_Average NR: 0.028889        Avg_Max NR: 0.120000
+    Max_Rigid: 0.000000     Max_Average NR: 0.044444        Max_Max NR: 0.200000
+
+For each ``nplane``, these statistics (Average and Max) are calculated across PCs on the offsets found in ``ops['regDX']``.
+If the registration works perfectly and most of the motion is removed from the registered dataset, these scores
+should all be very close to zero.
+
+.. Important::
+
+    Make sure to also inspect the registered video to check the quality of registration. You can see an example
+    of how this is done in the GUI `here <https://youtu.be/M7UjvCUn74Y?t=810>`_.
+
+You may notice that upon visual inspection, the registered video may look fine/contain little motion even
+if the statistics are not close to zero. You should always visually check the registration output and prioritize
+what your eyes say over what the CLI script reports.
+
+.. note::
+
+    All suite2p registration `settings <settings.html#registration>`__ can be modified in this CLI script. Just pass
+    the setting with its value as an optional argument. For instance,
+
+    .. prompt:: bash
+
+        reg_metrics path_to_data_tif --nplanes 2 --smooth_sigma 1.2
+
+    runs the script with ``ops['nplanes'] = 2`` and ``ops['smooth_sigma'] = 1.2``.
+    You can see all the arguments ``reg_metrics`` takes with the following command:
+
+    .. prompt:: bash
+
+        reg_metrics --help

@@ -1,7 +1,8 @@
-from PyQt5 import QtGui, QtCore
-import pyqtgraph as pg
+from PyQt5 import QtGui
 from pkg_resources import iter_entry_points
+
 from . import reggui, drawroi, merge, io, rungui, visualize, classgui
+
 
 def mainmenu(parent):
     main_menu = parent.menuBar()
@@ -17,6 +18,18 @@ def mainmenu(parent):
     loadProc.setShortcut("Ctrl+L")
     loadProc.triggered.connect(lambda: io.load_dialog(parent))
     parent.addAction(loadProc)
+
+    # load processed data
+    loadNWB = QtGui.QAction("Load NWB file", parent)
+    loadNWB.triggered.connect(lambda: io.load_dialog_NWB(parent))
+    parent.addAction(loadNWB)
+
+    # load folder of processed data
+    loadFolder = QtGui.QAction("Load &Folder with planeX folders", parent)
+    loadFolder.setShortcut("Ctrl+F")
+    loadFolder.triggered.connect(lambda: io.load_dialog_folder(parent))
+    parent.addAction(loadFolder)
+
 
     # load a behavioral trace
     parent.loadBeh = QtGui.QAction(
@@ -50,6 +63,8 @@ def mainmenu(parent):
     file_menu = main_menu.addMenu("&File")
     file_menu.addAction(runS2P)
     file_menu.addAction(loadProc)
+    file_menu.addAction(loadNWB)
+    file_menu.addAction(loadFolder)
     file_menu.addAction(parent.loadBeh)
     file_menu.addAction(parent.saveMat)
     file_menu.addAction(exportFig)

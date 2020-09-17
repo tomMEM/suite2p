@@ -41,6 +41,26 @@ recommend using this package: `npy-matlab`_. Alternatively there is a
 *new* save button in the GUI (in the file menu) that allows you to save
 the iscell again to the ``Fall.mat`` file.
 
+NWB Output
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If ``ops['save_NWB']=1``, then an NWB file is created ``ophys.nwb``. This 
+will contain the fields from ops and stat required to load back into the GUI, along 
+with F, Fneu, spks and iscell. If 
+the recording has multiple planes, then they are all saved together like in 
+combined view. See fields below:
+
+stat: stat['ypix'], stat['xpix'] (if multiplane `stat['iplane']`) are saved in 
+'pixel_mask' (called `'voxel_mask'` in multiplane).
+
+ops: 'meanImg', 'max_proj', 'Vcorr' are saved in Images 'Backgrounds_k' where k is the plane 
+number, and have the same names. optionally if two channels, 'meanImg_chan2' is saved.
+
+iscell: saved as an array 'iscell' 
+
+F,Fneu,spks are saved as roi_response_series 'Fluorescence', 'Neuropil', and 'Deconvolved'.
+
+
 Multichannel recordings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -125,5 +145,6 @@ are added to ``ops.npy``:
 -  meanImg: mean of registered frames
 -  meanImgE: a median-filtered version of the mean image
 -  Vcorr: correlation map (computed during cell detection)
+-  filelist: List of the image file names (e.g. tiff) that were loaded, in the order that Suite2p processed them.
 
 .. _npy-matlab: https://github.com/kwikteam/npy-matlab

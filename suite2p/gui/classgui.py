@@ -1,13 +1,12 @@
-from PyQt5 import QtGui, QtCore
-import sys
-import numpy as np
 import os
-import __main__
 import shutil
-from ..classification import classifier
-from . import masks, io
 
-#def make_buttons(parent)
+import numpy as np
+from PyQt5 import QtGui
+
+from . import masks
+from .. import classification
+
 
 def make_buttons(parent,b0):
     # ----- CLASSIFIER BUTTONS -------
@@ -41,24 +40,13 @@ def load_s2p_classifier(parent):
     parent.saveDefault.setEnabled(True)
 
 def load_default_classifier(parent):
-    load(parent,
-        os.path.join(
-            os.path.abspath(os.path.dirname(__main__.__file__)),
-            "classifiers/classifier_user.npy",
-        ),
-    )
+    load(parent, parent.classuser)
     class_activated(parent)
 
 def class_file(parent):
-    if parent.classfile == os.path.join(
-        os.path.abspath(os.path.dirname(__main__.__file__)),
-        "classifiers/classifier_user.npy",
-    ):
+    if parent.classfile == parent.classuser:
         cfile = "default classifier"
-    elif parent.classfile == os.path.join(
-        os.path.abspath(os.path.dirname(__main__.__file__)),
-        "classifiers/classifier.npy"
-    ):
+    elif parent.classfile == parent.classorig:
         cfile = "suite2p classifier"
     else:
         cfile = parent.classfile
@@ -79,10 +67,7 @@ def class_default(parent):
         QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
     )
     if dm == QtGui.QMessageBox.Yes:
-        classfile = os.path.join(
-            os.path.abspath(os.path.dirname(__main__.__file__)),
-            "classifiers/classifier_user.npy",
-        )
+        classfile = parent.classuser
         save_model(classfile, parent.model.stats, parent.model.iscell, parent.model.keys)
 
 def reset_default(parent):
@@ -94,17 +79,12 @@ def reset_default(parent):
         QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
     )
     if dm == QtGui.QMessageBox.Yes:
-        classfile = os.path.join(
-            os.path.abspath(os.path.dirname(__main__.__file__)),
-            "classifiers/classifier_user.npy",
-        )
-        shutil.copy(parent.classorig, classfile)
-
+        shutil.copy(parent.classorig, parent.classuser)
 
 def load(parent, name):
     print('loading classifier ', name)
     parent.classfile = name
-    parent.model = classifier.Classifier(classfile=name)
+    parent.model = classification.Classifier(classfile=name)
     if parent.model.loaded:
         activate(parent, True)
 
@@ -143,7 +123,7 @@ def load_data(parent,keys,trainfiles):
                     stat = np.load(basename+'/stat.npy', allow_pickle=True)
                     ypix = stat[0]['ypix']
                     lstat = len(stat)
-                except (KeyError, OSError, RuntimeError, TypeError, NameError):
+                except (IndexError, KeyError, OSError, RuntimeError, TypeError, NameError):
                     print('\t'+basename+': incorrect or missing stat.npy file :(')
                 if lstat != ncells:
                     print('\t'+basename+': stat.npy is not the same length as iscell.npy')
@@ -151,7 +131,8 @@ def load_data(parent,keys,trainfiles):
                     # add iscell and stat to classifier
                     print('\t'+fname+' was added to classifier')
                     iscell = iscells[:,0].astype(np.float32)
-                    stats = classifier.get_stat_keys(stat,parent.default_keys)
+                    stats = np.reshape(np.array([stat[j][k] for j in range(len(stat)) for k in parent.default_keys]),
+                                (len(stat),-1))
                     train_stats = np.concatenate((train_stats,stats),axis=0)
                     train_iscell = np.concatenate((train_iscell,iscell),axis=0)
                     trainfiles_good.append(fname)
@@ -171,8 +152,7 @@ def load_data(parent,keys,trainfiles):
 def add_to(parent):
     fname = parent.basename+'/iscell.npy'
     print('Adding current dataset to classifier')
-    if parent.classfile == os.path.join(os.path.abspath(os.path.dirname(__main__.__file__)),
-                     'classifiers/classifier_user.npy'):
+    if parent.classfile == parent.classuser:
         cfile = 'the default classifier'
     else:
         cfile = parent.classfile
@@ -180,7 +160,8 @@ def add_to(parent):
                                     'Current classifier is '+cfile+'. Add to this classifier?',
                                     QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
     if dm == QtGui.QMessageBox.Yes:
-        stats = classifier.get_stat_keys(parent.stat, parent.model.keys)
+        stats = np.reshape(np.array([parent.stat[j][k] for j in range(len(parent.stat)) for k in parent.model.keys]),
+                                (len(parent.stat),-1))
         parent.model.stats = np.concatenate((parent.model.stats,stats),axis=0)
         parent.model.iscell = np.concatenate((parent.model.iscell,parent.iscell),axis=0)
         save_model(parent.classfile, parent.model.stats, parent.model.iscell, parent.model.keys)
@@ -188,12 +169,6 @@ def add_to(parent):
         msg = QtGui.QMessageBox.information(parent,'Classifier saved and loaded',
                                             'Current dataset added to classifier, and cell probabilities computed and in GUI')
 
-def apply(parent):
-    classval = float(parent.probedit.text())
-    iscell = parent.probcell > classval
-    masks.flip_for_class(parent, iscell)
-    parent.update_plot()
-    io.save_iscell(parent)
 
 def save(parent, train_stats, train_iscell, keys):
     name = QtGui.QFileDialog.getSaveFileName(parent,'Classifier name (*.npy)')
@@ -220,8 +195,8 @@ def save_list(parent):
 
 def activate(parent, inactive):
     if inactive:
-        parent.probcell = parent.model.apply(parent.stat)
-    masks.class_masks(parent)
+        parent.probcell = parent.model.predict_proba(parent.stat)
+    class_masks(parent)
     parent.update_plot()
 
 def disable(parent):
@@ -319,7 +294,7 @@ class ListChooser(QtGui.QDialog):
                 self.saveasdefault.setEnabled(True)
 
     def apply_class(self, parent):
-        parent.model = classifier.Classifier(classfile=parent.classfile)
+        parent.model = classification.Classifier(classfile=parent.classfile)
         activate(parent, True)
 
     def save_default(self, parent):
@@ -327,10 +302,20 @@ class ListChooser(QtGui.QDialog):
                                         'Are you sure you want to overwrite your default classifier?',
                                         QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
         if dm == QtGui.QMessageBox.Yes:
-            classorig = parent.classfile
-            classfile = os.path.join(os.path.abspath(os.path.dirname(__main__.__file__)),
-                             'classifiers/classifier_user.npy')
-            shutil.copy(classorig, classfile)
+            shutil.copy(parent.classfile, parent.classuser)
 
     def exit_list(self):
         self.accept()
+
+
+def class_masks(parent):
+    c = 6
+    istat = parent.probcell
+    parent.colors['colorbar'][c] = [istat.min(), (istat.max()-istat.min())/2, istat.max()]
+    istat = istat - istat.min()
+    istat = istat / istat.max()
+    col = masks.istat_transform(istat, parent.ops_plot['colormap'])
+    parent.colors['cols'][c] = col
+    parent.colors['istat'][c] = istat.flatten()
+
+    masks.rgb_masks(parent, col, c)

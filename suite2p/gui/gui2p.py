@@ -1,23 +1,16 @@
-import sys
 import os
+import pathlib
 import shutil
-import time
-import numpy as np
-from PyQt5 import QtGui, QtCore
-import pyqtgraph as pg
-from pyqtgraph import GraphicsScene
-from scipy.ndimage import gaussian_filter1d
-from scipy.interpolate import interp1d
+import sys
 import warnings
-from . import menus, io, merge, views, buttons, classgui, traces, graphics, masks
 
-def resample_frames(y, x, xt):
-    ''' resample y (defined at x) at times xt '''
-    ts = x.size / xt.size
-    y = gaussian_filter1d(y, np.ceil(ts/2), axis=0)
-    f = interp1d(x,y,fill_value="extrapolate")
-    yt = f(xt)
-    return yt
+import numpy as np
+import pyqtgraph as pg
+from PyQt5 import QtGui, QtCore
+
+from . import menus, io, merge, views, buttons, classgui, traces, graphics, masks
+from .. import run_s2p, default_ops
+
 
 class MainWindow(QtGui.QMainWindow):
     def __init__(self, statfile=None):
@@ -27,17 +20,15 @@ class MainWindow(QtGui.QMainWindow):
         self.setGeometry(50, 50, 1500, 800)
         self.setWindowTitle("suite2p (run pipeline or load stat.npy)")
         import suite2p
-        s2ppath = os.path.dirname(os.path.realpath(suite2p.__file__))
+        s2p_dir = pathlib.Path(suite2p.__file__).parent
+        icon_path = os.fspath(s2p_dir.joinpath('logo', 'logo.png'))
 
-        icon_path = os.path.join(
-            s2ppath, "logo","logo.png"
-        )
         app_icon = QtGui.QIcon()
         app_icon.addFile(icon_path, QtCore.QSize(16, 16))
         app_icon.addFile(icon_path, QtCore.QSize(24, 24))
         app_icon.addFile(icon_path, QtCore.QSize(32, 32))
         app_icon.addFile(icon_path, QtCore.QSize(48, 48))
-        app_icon.addFile(icon_path, QtCore.QSize(96, 96))
+        app_icon.addFile(icon_path, QtCore.QSize(64, 64))
         app_icon.addFile(icon_path, QtCore.QSize(256, 256))
         self.setWindowIcon(app_icon)
         self.setStyleSheet("QMainWindow {background: 'black';}")
@@ -52,23 +43,27 @@ class MainWindow(QtGui.QMainWindow):
                               "color:gray;}")
         self.loaded = False
         self.ops_plot = []
+        
         ### first time running, need to check for user files
+        user_dir = pathlib.Path.home().joinpath('.suite2p')
+        user_dir.mkdir(exist_ok=True)
+
         # check for classifier file
-        self.classfile = os.path.join(s2ppath,
-                                      "classifiers","classifier_user.npy",
-        )
-        self.classorig = os.path.join(s2ppath,
-                                      "classifiers","classifier.npy"
-        )
-        if not os.path.isfile(self.classfile):
-            shutil.copy(self.classorig, self.classfile)
+        class_dir = user_dir.joinpath('classifiers')
+        class_dir.mkdir(exist_ok=True)
+        self.classuser = os.fspath(class_dir.joinpath('classifier_user.npy'))
+        self.classorig = os.fspath(s2p_dir.joinpath('classifiers', 'classifier.npy'))
+        if not os.path.isfile(self.classuser):
+            shutil.copy(self.classorig, self.classuser)
+        self.classfile = self.classuser
+
         # check for ops file (for running suite2p)
-        self.opsorig = os.path.join(s2ppath,
-                                    'ops','ops.npy')
-        self.opsfile = os.path.join(s2ppath,
-                                          'ops','ops_user.npy')
-        if not os.path.isfile(self.opsfile):
-            shutil.copy(self.opsorig, self.opsfile)
+        ops_dir = user_dir.joinpath('ops')
+        ops_dir.mkdir(exist_ok=True)
+        self.opsuser = os.fspath(ops_dir.joinpath('ops_user.npy'))
+        if not os.path.isfile(self.opsuser):
+            np.save(self.opsuser, default_ops())
+        self.opsfile = self.opsuser
 
         menus.mainmenu(self)
         menus.classifier(self)
@@ -109,6 +104,9 @@ class MainWindow(QtGui.QMainWindow):
         #statfile = 'C:/Users/carse/OneDrive/Documents/suite2p/plane0/stat.npy'
         #statfile = 'D:/grive/cshl_suite2p/GT1/suite2p/plane0/stat.npy'
         #statfile = '/media/carsen/DATA1/TIFFS/auditory_cortex/suite2p/plane0/stat.npy'
+        #folder = 'D:/DATA/GT1/singlechannel_half/suite2p/'
+        #self.fname = folder
+        #io.load_folder(self)
         if statfile is not None:
             self.fname = statfile
             io.load_proc(self)
@@ -127,7 +125,13 @@ class MainWindow(QtGui.QMainWindow):
         files = [u.toLocalFile() for u in event.mimeData().urls()]
         print(files)
         self.fname = files[0]
-        io.load_proc(self)
+        if os.path.splitext(self.fname)[-1]=='.npy':
+            io.load_proc(self)
+        elif os.path.splitext(self.fname)[-1]=='.nwb':
+            io.load_NWB(self)
+        else:
+            print('invalid extension %s, use .nwb or .npy'%os.path.splitext(self.fname)[-1])
+
 
     def make_buttons(self):
         # ROI CHECKBOX
@@ -676,7 +680,7 @@ def run(statfile=None):
     app_icon.addFile(icon_path, QtCore.QSize(24, 24))
     app_icon.addFile(icon_path, QtCore.QSize(32, 32))
     app_icon.addFile(icon_path, QtCore.QSize(48, 48))
-    app_icon.addFile(icon_path, QtCore.QSize(96, 96))
+    app_icon.addFile(icon_path, QtCore.QSize(64, 64))
     app_icon.addFile(icon_path, QtCore.QSize(256, 256))
     app.setWindowIcon(app_icon)
     GUI = MainWindow(statfile=statfile)

@@ -16,9 +16,14 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# builds
+.eggs
+
 # python and jupyter
 jupyter/.ipynb_checkpoints/
 jupyter/__pycache__/
+jupyter/*.npy
+jupyter/*.tif
 .ipynb_checkpoints/
 __pycache__/
 dist/
@@ -41,6 +46,12 @@ doctrees/
 .AppleDouble
 .LSOverride
 
+# visual studio code
+.vscode
+
+# pycharm
+.idea
+
 # Thumbnails
 ._*
 
@@ -54,3 +65,6 @@ doctrees/
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# data
+data/test_data

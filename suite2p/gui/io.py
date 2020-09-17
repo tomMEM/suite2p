@@ -1,11 +1,15 @@
-from PyQt5 import QtGui, QtCore
-import pyqtgraph as pg
+import os, time
 import numpy as np
-import os
-import time
-from .. import utils
-from . import masks,classgui,traces,views, graphics
 import scipy.io
+from PyQt5 import QtGui
+
+from . import utils, masks, views, graphics, traces, classgui
+from .. import io
+
+
+def export_fig(parent):
+    parent.win.scene().contextMenuItem = parent.p1
+    parent.win.scene().showExportDialog()
 
 def make_masks_and_enable_buttons(parent):
     parent.checkBox.setChecked(True)
@@ -35,9 +39,9 @@ def make_masks_and_enable_buttons(parent):
     for n in range(0, ncells):
         ypix = parent.stat[n]["ypix"].flatten()
         xpix = parent.stat[n]["xpix"].flatten()
-        iext = utils.boundary(ypix, xpix)
-        parent.stat[n]["yext"] = ypix[iext]
-        parent.stat[n]["xext"] = xpix[iext]
+        yext, xext = utils.boundary(ypix, xpix)
+        parent.stat[n]["yext"] = yext
+        parent.stat[n]["xext"] = xext
         ycirc, xcirc = utils.circle(
             parent.stat[n]["med"],
             parent.stat[n]["radius"]
@@ -98,10 +102,6 @@ def make_masks_and_enable_buttons(parent):
     parent.show()
     # no classifier loaded
     classgui.activate(parent, False)
-
-def export_fig(parent):
-    parent.win.scene().contextMenuItem = parent.p1
-    parent.win.scene().showExportDialog()
 
 def enable_views_and_classifier(parent):
     for b in range(9):
@@ -164,15 +164,69 @@ def enable_views_and_classifier(parent):
     # parent.p1.scene().showExportDialog()
 
 def load_dialog(parent):
+    options=QtGui.QFileDialog.Options()
+    options |= QtGui.QFileDialog.DontUseNativeDialog
     name = QtGui.QFileDialog.getOpenFileName(
-        parent, "Open stat.npy", filter="stat.npy"
+        parent, "Open stat.npy", filter="stat.npy",
+        options=options
     )
     parent.fname = name[0]
     load_proc(parent)
 
-def load_proc(parent):
+def load_dialog_NWB(parent):
+    options=QtGui.QFileDialog.Options()
+    options |= QtGui.QFileDialog.DontUseNativeDialog
+    name = QtGui.QFileDialog.getOpenFileName(
+        parent, "Open ophys.nwb", filter="*.nwb",
+        options=options
+    )
+    parent.fname = name[0]
+    load_NWB(parent)
+    
+def load_dialog_folder(parent):
+    options=QtGui.QFileDialog.Options()
+    options |= QtGui.QFileDialog.DontUseNativeDialog
+    name = QtGui.QFileDialog.getExistingDirectory(
+        parent, "Open folder with planeX folders",
+        options=options
+    )
+    parent.fname = name
+    load_folder(parent)
+
+def load_NWB(parent):
     name = parent.fname
     print(name)
+    if 1:
+        procs = io.read_nwb(name)
+        if procs[1]['nchannels']==2:
+            parent.hasred = True
+        else:
+            parent.hasred = False
+        load_to_GUI(parent, os.path.split(name)[0], procs)
+            
+        parent.loaded = True
+    #except Exception as e:
+    #    print('ERROR with NWB: %s'%e)
+
+def load_folder(parent):
+    save_folder = parent.fname
+    plane_folders = [ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane']
+    stat_found = False
+    if len(plane_folders) > 0:
+        stat_found = all([os.path.isfile(os.path.join(f, 'stat.npy')) for f in plane_folders])
+    if not stat_found:
+        print('No processed planeX folders in folder')
+        return
+
+    # create a combined folder to hold iscell and redcell
+    output = io.combined(save_folder, save=False)
+    parent.basename = os.path.join(parent.fname, 'combined')
+    load_to_GUI(parent, parent.basename, output)
+    parent.loaded = True
+    print(parent.fname)
+
+def load_files(name):
+    """ give stat.npy path and load all needed files for suite2p """
     try:
         stat = np.load(name, allow_pickle=True)
         ypix = stat[0]["ypix"]
@@ -181,6 +235,7 @@ def load_proc(parent):
         print('ERROR: this is not a stat.npy file :( '
               '(needs stat[n]["ypix"]!)')
         stat = None
+    goodfolder = False
     if stat is not None:
         basename, fname = os.path.split(name)
         goodfolder = True
@@ -218,46 +273,60 @@ def load_proc(parent):
             redcell = np.load(basename + "/redcell.npy")
             probredcell = redcell[:,1].copy()
             redcell = redcell[:,0].astype(np.bool)
-            parent.hasred = True
+            hasred = True
         except (ValueError, OSError, RuntimeError, TypeError, NameError):
             print("no channel 2 labels found (redcell.npy)")
-            parent.hasred = False
+            hasred = False
             if goodfolder:
                 NN = Fcell.shape[0]
                 redcell = np.zeros((NN,), np.bool)
                 probredcell = np.zeros((NN,), np.float32)
-
-        if goodfolder:
-            parent.basename = basename
-            parent.stat = stat
-            parent.ops = ops
-            parent.Fcell = Fcell
-            parent.Fneu = Fneu
-            parent.Spks = Spks
-            parent.iscell = iscell
-            parent.probcell = probcell
-            parent.redcell = redcell
-            parent.probredcell = probredcell
-            parent.notmerged = np.ones_like(parent.iscell).astype(np.bool)
-            for n in range(len(parent.stat)):
-                parent.stat[n]['chan2_prob'] = parent.probredcell[n]
-                parent.stat[n]['inmerge'] = 0
-            parent.stat = np.array(parent.stat)
-            make_masks_and_enable_buttons(parent)
-            parent.ichosen = 0
-            parent.imerge = [0]
-            for n in range(len(parent.stat)):
-                if 'imerge' not in parent.stat[n]:
-                    parent.stat[n]['imerge'] = []
-            parent.loaded = True
-        else:
-            print("stat.npy found, but other files not in folder")
-            Text = ("stat.npy found, but other files missing, "
-                    "choose another?")
-            load_again(parent, Text)
     else:
-        Text = "Incorrect file, not a stat.npy, choose another?"
+        print("incorrect file, not a stat.npy")
+        return None
+
+    if goodfolder:
+        return stat, ops, Fcell, Fneu, Spks, iscell, probcell, redcell, probredcell, hasred
+    else:
+        print("stat.npy found, but other files not in folder")
+        return None
+
+def load_proc(parent):
+    name = parent.fname
+    print(name)
+    basename, fname = os.path.split(name)
+    output = load_files(name)
+    if output is not None:
+        load_to_GUI(parent, basename, output)
+        parent.loaded = True
+    else:
+        Text = "Incorrect files, choose another?"
         load_again(parent, Text)
+
+def load_to_GUI(parent, basename, procs):
+    stat, ops, Fcell, Fneu, Spks, iscell, probcell, redcell, probredcell, hasred = procs
+    parent.basename = basename
+    parent.stat = stat
+    parent.ops = ops
+    parent.Fcell = Fcell
+    parent.Fneu = Fneu
+    parent.Spks = Spks
+    parent.iscell = iscell.astype(np.bool)
+    parent.probcell = probcell
+    parent.redcell = redcell.astype(np.bool)
+    parent.probredcell = probredcell
+    parent.hasred = hasred
+    parent.notmerged = np.ones_like(parent.iscell).astype(np.bool)
+    for n in range(len(parent.stat)):
+        parent.stat[n]['chan2_prob'] = parent.probredcell[n]
+        parent.stat[n]['inmerge'] = 0
+    parent.stat = np.array(parent.stat)
+    make_masks_and_enable_buttons(parent)
+    parent.ichosen = 0
+    parent.imerge = [0]
+    for n in range(len(parent.stat)):
+        if 'imerge' not in parent.stat[n]:
+            parent.stat[n]['imerge'] = []
 
 def load_behavior(parent):
     name = QtGui.QFileDialog.getOpenFileName(
@@ -331,6 +400,8 @@ def save_iscell(parent):
 def save_mat(parent):
     print('saving to mat')
     matpath = os.path.join(parent.basename,'Fall.mat')
+    if 'date_proc' in parent.ops:
+        parent.ops['date_proc'] = []
     scipy.io.savemat(matpath, {'stat': parent.stat,
                          'ops': parent.ops,
                          'F': parent.Fcell,

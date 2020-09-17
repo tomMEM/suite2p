@@ -1,1 +1,2 @@
-from . import sparsedetect, chan2detect, sourcery
+from .detect import detect
+from .stats import roi_stats, ROI

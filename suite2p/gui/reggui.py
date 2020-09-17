@@ -1,14 +1,18 @@
 # heavily modified script from a pyqt4 release
-from PyQt5 import QtGui, QtCore
-import pyqtgraph as pg
 import os
-import sys
-from skimage import io
-from scipy.ndimage import gaussian_filter1d
+import time
+
 import numpy as np
-from .. import utils
-from . import masks
-from ..registration import zalign
+import pyqtgraph as pg
+from PyQt5 import QtGui, QtCore
+from scipy.ndimage import gaussian_filter1d
+from natsort import natsorted
+from tifffile import imread
+
+from . import masks, views, graphics, traces, classgui, utils
+from .. import registration
+from ..io.save import compute_dydx
+
 
 class BinaryPlayer(QtGui.QMainWindow):
     def __init__(self, parent=None):
@@ -246,12 +250,11 @@ class BinaryPlayer(QtGui.QMainWindow):
                 if self.wraw_wred:
                     self.reg_file_raw_chan2.seek(0, 0)
         self.img = np.zeros((self.LY, self.LX), dtype=np.int16)
-        ichan = np.arange(0,3,1,int)
         for n in range(len(self.reg_loc)):
             buff = self.reg_file[n].read(self.nbytesread[n])
             img = np.reshape(np.frombuffer(buff, dtype=np.int16, offset=0),(self.Ly[n],self.Lx[n]))
-            img = img[self.ycrop[n][0]:self.ycrop[n][1], self.xcrop[n][0]:self.xcrop[n][1]]
-            self.img[self.yrange[n][0]:self.yrange[n][1], self.xrange[n][0]:self.xrange[n][1]] = img
+            self.img[self.dy[n]:self.dy[n]+self.Ly[n], self.dx[n]:self.dx[n]+self.Lx[n]] = img
+            
         if self.wred and self.red_on:
             buff = self.reg_file_chan2.read(self.nbytesread[0])
             imgred = np.reshape(np.frombuffer(buff, dtype=np.int16, offset=0),(self.Ly[0],self.Lx[0]))[:,:,np.newaxis]
@@ -268,6 +271,11 @@ class BinaryPlayer(QtGui.QMainWindow):
             if hasattr(self, 'zmax'):
                 self.Zedit.setText(str(self.zmax[self.cframe]))
             self.iside.setImage(self.zstack[int(self.Zedit.text())], levels=self.zrange)
+        #if self.maskbox.isChecked():
+        #    imgmin = self.img.min()
+        #    self.allmasks[:,:,-1] = np.maximum(0, ((self.img - imgmin) / (self.img.max() - imgmin) - 0.5)*2) * 255 * self.mask_bool
+        #    self.maskmain.setImage(self.allmasks, levels=[0, 255])
+        #    self.maskside.setImage(self.allmasks, levels=[0, 255])
 
         self.imain.setImage(self.img, levels=self.srange)
         self.frameSlider.setValue(self.cframe)
@@ -295,22 +303,27 @@ class BinaryPlayer(QtGui.QMainWindow):
         self.RGB = -1*np.ones((self.LY, self.LX, 3), np.int32)
         self.cellpix = -1*np.ones((self.LY, self.LX), np.int32)
         self.sroi = np.zeros((self.LY, self.LX), np.uint8)
+        
         for n in np.nonzero(self.iscell)[0]:
             ypix = self.stat[n]['ypix'].flatten()
             xpix = self.stat[n]['xpix'].flatten()
             if not self.ops[0]['allow_overlap']:
                 ypix = ypix[~self.stat[n]['overlap']]
                 xpix = xpix[~self.stat[n]['overlap']]
-            iext = utils.boundary(ypix,xpix)
-            yext = ypix[iext]
-            xext = xpix[iext]
-            goodi = (yext>=0) & (xext>=0) & (yext<self.LY) & (xext<self.LX)
-            self.stat[n]['yext'] = yext[goodi] + 0.5
-            self.stat[n]['xext'] = xext[goodi] + 0.5
+            yext, xext = utils.boundary(ypix, xpix)
+            if len(yext)>0:
+                goodi = (yext>=0) & (xext>=0) & (yext<self.LY) & (xext<self.LX)
+                self.stat[n]['yext'] = yext[goodi] + 0.5
+                self.stat[n]['xext'] = xext[goodi] + 0.5
+                self.sroi[yext[goodi], xext[goodi]] = 200
+                #self.sroi[ypix, xpix] = 100
+                #self.RGB[ypix, xpix] = self.colors[n]
+                self.RGB[yext[goodi], xext[goodi]] = self.colors[n]
+            else:
+                self.stat[n]['yext'] = yext
+                self.stat[n]['xext'] = xext
             self.cellpix[ypix, xpix] = n
-            self.sroi[yext[goodi], xext[goodi]] = 200
-            self.RGB[yext[goodi], xext[goodi]] = self.colors[n]
-
+        self.mask_bool = self.sroi > 0    
         self.allmasks = np.concatenate((self.RGB,
                                         self.sroi[:,:,np.newaxis]), axis=-1)
         self.maskmain.setImage(self.allmasks, levels=[0, 255])
@@ -338,20 +351,17 @@ class BinaryPlayer(QtGui.QMainWindow):
             self.openFile(filename[0], False)
 
     def open_combined(self):
-        filename = QtGui.QFileDialog.getOpenFileName(self,
-                            "Open multiplane ops1.npy file",filter="ops*.npy")
+        filename = QtGui.QFileDialog.getExistingDirectory(self,
+                            "Load binaries for all planes (choose folder with planeX folders)")
         # load ops in same folder
         if filename:
-            print(filename[0])
-            self.openCombined(filename[0])
+            print(filename)
+            self.openCombined(filename)
 
-    def openCombined(self, filename):
+    def openCombined(self, save_folder):
         try:
-            ops1 = np.load(filename, allow_pickle=True)
-            basefolder = ops1[0]['save_path0']
-            #opsCombined = np.load(os.path.abspath(os.path.join(basefolder, 'suite2p/combined/ops.npy'), allow_pickle=True).item()
-            #self.LY = opsCombined['Ly']
-            #self.LX = opsCombined['Lx']
+            plane_folders = natsorted([ f.path for f in os.scandir(save_folder) if f.is_dir() and f.name[:5]=='plane'])
+            ops1 = [np.load(os.path.join(f, 'ops.npy'), allow_pickle=True).item() for f in plane_folders]
             self.LY = 0
             self.LX = 0
             self.reg_loc = []
@@ -360,14 +370,11 @@ class BinaryPlayer(QtGui.QMainWindow):
             self.Lx = []
             self.dy = []
             self.dx = []
-            self.yrange = []
-            self.xrange = []
-            self.ycrop  = []
-            self.xcrop  = []
             self.wraw = False
             self.wred = False
             self.wraw_wred = False
             # check that all binaries still exist
+            dy, dx = compute_dydx(ops1)
             for ipl,ops in enumerate(ops1):
                 #if os.path.isfile(ops['reg_file']):
                 if os.path.isfile(ops['reg_file']):
@@ -379,30 +386,16 @@ class BinaryPlayer(QtGui.QMainWindow):
                 self.reg_file.append(open(self.reg_loc[-1], 'rb'))
                 self.Ly.append(ops['Ly'])
                 self.Lx.append(ops['Lx'])
-                self.dy.append(ops['dy'])
-                self.dx.append(ops['dx'])
-                xrange = ops['xrange']
-                yrange = ops['yrange']
-                self.ycrop.append(yrange)
-                self.xcrop.append(xrange)
-                self.yrange.append([self.dy[-1]+yrange[0], self.dy[-1]+yrange[1]])
-                self.xrange.append([self.dx[-1]+xrange[0], self.dx[-1]+xrange[1]])
+                self.dy.append(dy[ipl])
+                self.dx.append(dx[ipl])
                 self.LY = np.maximum(self.LY, self.Ly[-1]+self.dy[-1])
                 self.LX = np.maximum(self.LX, self.Lx[-1]+self.dx[-1])
                 good = True
             self.Floaded = False
-            if not fromgui:
-                if os.path.isfile(os.path.abspath(os.path.join(os.path.dirname(filename), 'combined', 'F.npy'))):
-                    self.Fcell = np.load(os.path.abspath(os.path.join(os.path.dirname(filename), 'combined', 'F.npy')))
-                    self.stat =  np.load(os.path.abspath(os.path.join(os.path.dirname(filename), 'combined', 'stat.npy')), allow_pickle=True)
-                    self.iscell =  np.load(os.path.abspath(os.path.join(os.path.dirname(filename), 'combined', 'iscell.npy')), allow_pickle=True)
-                    self.Floaded = True
-                else:
-                    self.Floaded = False
-            else:
-                self.Floaded = True
+            
         except Exception as e:
-            print("ERROR: incorrect ops1.npy or missing binaries")
+            print('ERROR: %s'%e)
+            print("(could be incorrect folder or missing binaries)")
             good = False
             try:
                 for n in range(len(self.reg_loc)):
@@ -411,7 +404,7 @@ class BinaryPlayer(QtGui.QMainWindow):
             except:
                 print('tried to close binaries')
         if good:
-            self.filename = filename
+            self.filename = save_folder
             self.ops = ops1
             self.setup_views()
 
@@ -422,11 +415,9 @@ class BinaryPlayer(QtGui.QMainWindow):
             self.LX = ops['Lx']
             self.Ly = [ops['Ly']]
             self.Lx = [ops['Lx']]
-            self.ycrop = [ops['yrange']]
-            self.xcrop = [ops['xrange']]
-            self.yrange = self.ycrop
-            self.xrange = self.xcrop
-
+            self.dx = [0]
+            self.dy = [0]
+            
             if os.path.isfile(ops['reg_file']):
                 self.reg_loc = [ops['reg_file']]
             else:
@@ -669,7 +660,7 @@ class BinaryPlayer(QtGui.QMainWindow):
         )
         self.fname = name[0]
         try:
-            self.zstack = io.imread(self.fname)
+            self.zstack = imread(self.fname)
             self.zLy, self.zLx = self.zstack.shape[1:]
             self.Zedit.setValidator(QtGui.QIntValidator(0, self.zstack.shape[0]))
             self.zrange = [np.percentile(self.zstack,1), np.percentile(self.zstack,99)]
@@ -715,15 +706,11 @@ class BinaryPlayer(QtGui.QMainWindow):
     def createButtons(self):
         iconSize = QtCore.QSize(30, 30)
         openButton = QtGui.QPushButton('load ops.npy')
-        #openButton.setIcon(self.style().standardIcon(QtGui.QStyle.SP_DialogOpenButton))
-        #openButton.setIconSize(iconSize)
         openButton.setToolTip("Open single-plane ops.npy")
         openButton.clicked.connect(self.open)
 
-        openButton2 = QtGui.QPushButton('load ops1.npy')
-        #openButton2.setIcon(self.style().standardIcon(QtGui.QStyle.SP_DirOpenIcon))
-        #openButton2.setIconSize(iconSize)
-        #openButton2.setToolTip("Open multi-plane ops1.npy")
+        openButton2 = QtGui.QPushButton('load folder')
+        openButton2.setToolTip("Choose a folder with planeX folders to load together")
         openButton2.clicked.connect(self.open_combined)
 
         loadZ = QtGui.QPushButton('load z-stack tiff')
@@ -802,7 +789,7 @@ class BinaryPlayer(QtGui.QMainWindow):
         print('paused')
 
     def compute_z(self):
-        ops, zcorr = zalign.compute_zpos(self.zstack, self.ops[0])
+        ops, zcorr = registration.compute_zpos(self.zstack, self.ops[0])
         self.zmax = np.argmax(gaussian_filter1d(zcorr.T.copy(), 2, axis=1), axis=1)
         np.save(self.filename, ops)
         self.plot_zcorr()

@@ -47,6 +47,7 @@ can install it as ``pip install suite2p``
    gui
    outputs
    multiday
+   developer_doc
    FAQ
 
 .. toctree::
@@ -57,3 +58,16 @@ can install it as ``pip install suite2p``
    celldetection
    roiextraction
    deconvolution
+
+.. toctree::
+   :maxdepth: 3
+   :caption: API:
+
+   api/suite2p.io
+   api/suite2p.registration
+   api/suite2p.detection
+   api/suite2p.extraction
+   api/suite2p.classification
+   api/suite2p.gui
+
+   

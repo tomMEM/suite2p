@@ -1,14 +1,12 @@
 import numpy as np
 import pyqtgraph as pg
-from scipy import stats
-import math
 from PyQt5 import QtGui
-from matplotlib.colors import hsv_to_rgb
-import time
-from .. import utils
-from ..extraction import dcnv
-from ..detection import sparsedetect
-from . import masks
+from scipy import stats
+
+from . import masks, io
+from . import utils
+from ..detection import roi_stats
+from .. import extraction
 
 def distance_matrix(parent, ilist):
     idist = 1e6 * np.ones((len(ilist), len(ilist)))
@@ -79,38 +77,25 @@ def merge_activity_masks(parent):
     xpix = xpix[goodi]
     lam = lam[goodi]
 
+
+    ### compute statistics of merges
     stat0 = {}
+    stat0['imerge'] = merged_cells
+    if 'iplane' in parent.stat[merged_cells[0]]:
+        stat0['iplane'] = parent.stat[merged_cells[0]]['iplane']
+    stat0['ypix'] = ypix
+    stat0['xpix'] = xpix
+    stat0['lam'] = lam / lam.sum()
+
     if 'aspect' in parent.ops:
         d0 = np.array([int(parent.ops['aspect']*10), 10])
     else:
         d0 = parent.ops['diameter']
         if isinstance(d0, int):
-            d0 = [d0,d0]
-
-    ### compute statistics of merges
-    stat0["imerge"] = merged_cells
-    stat0["ypix"] = ypix
-    stat0["xpix"] = xpix
-    stat0["lam"] = lam / lam.sum() * merged_cells.size
-    stat0['med']  = [np.median(stat0["ypix"]), np.median(stat0["xpix"])]
-    stat0["npix"] = ypix.size
-    radius = utils.fitMVGaus(ypix/d0[0], xpix/d0[1], lam, 2)[2]
-    stat0["radius"] = radius[0] * d0.mean()
-    stat0["aspect_ratio"] = 2 * radius[0]/(.01 + radius[0] + radius[1])
-    npix = np.array([parent.stat[n]['npix'] for n in range(len(parent.stat))]).astype('float32')
-    stat0["npix_norm"] = stat0["npix"] / npix.mean()
-    # compactness
-    rs,dy,dx = sparsedetect.circleMask(d0)
-    rsort = np.sort(rs.flatten())
-    r2 = ((ypix - stat0["med"][0])/d0[0])**2 + ((xpix - stat0["med"][1])/d0[1])**2
-    r2 = r2**.5
-    stat0["mrs"]  = np.mean(r2)
-    stat0["mrs0"] = np.mean(rsort[:r2.size])
-    stat0["compact"] = stat0["mrs"] / (1e-10 + stat0["mrs0"])
-    # footprint
-    stat0["footprint"] = footprints.mean()
+            d0 = [d0, d0]
+    
     # red prob
-    stat0['chan2_prob'] = prmean
+    stat0['chan2_prob'] = -1
     # inmerge
     stat0["inmerge"] = -1
 
@@ -122,22 +107,12 @@ def merge_activity_masks(parent):
     stat0["skew"] = stats.skew(dF)
     stat0["std"] = dF.std()
 
-    ### for GUI drawing
-    # compute outline and circle around cell
-    iext = utils.boundary(ypix, xpix)
-    stat0["yext"] = ypix[iext].astype(np.int32)
-    stat0["xext"] = xpix[iext].astype(np.int32)
-    ycirc, xcirc = utils.circle(stat0["med"], stat0["radius"])
-    goodi = (
-            (ycirc >= 0)
-            & (xcirc >= 0)
-            & (ycirc < parent.ops["Ly"])
-            & (xcirc < parent.ops["Lx"])
-            )
-    stat0["ycirc"] = ycirc[goodi]
-    stat0["xcirc"] = xcirc[goodi]
-    # deconvolve activity
-    spks = dcnv.oasis(dF[np.newaxis, :], parent.ops)
+    spks = extraction.oasis(
+        F=dF[np.newaxis, :],
+        batch_size=parent.ops['batch_size'],
+        tau=parent.ops['tau'],
+        fs=parent.ops['fs']
+    )
 
     ### remove previously merged cell from FOV (do not replace)
     for k in remove_merged:
@@ -154,17 +129,29 @@ def merge_activity_masks(parent):
 
     # add cell to structs
     parent.stat = np.concatenate((parent.stat, np.array([stat0])), axis=0)
-    parent.stat = sparsedetect.get_overlaps(parent.stat, parent.ops)
-    parent.stat = np.array(parent.stat)
+    parent.stat = roi_stats(parent.stat, d0[0], d0[1], parent.Ly, parent.Lx)
+    parent.stat[-1]['lam'] = parent.stat[-1]['lam'] * merged_cells.size
     parent.Fcell = np.concatenate((parent.Fcell, F[np.newaxis,:]), axis=0)
     parent.Fneu = np.concatenate((parent.Fneu, Fneu[np.newaxis,:]), axis=0)
     parent.Spks = np.concatenate((parent.Spks, spks), axis=0)
     iscell = np.array([parent.iscell[parent.ichosen]], dtype=bool)
     parent.iscell = np.concatenate((parent.iscell, iscell), axis=0)
     parent.probcell = np.append(parent.probcell, pmean)
-    parent.probredcell = np.append(parent.probredcell, prmean)
-    parent.redcell = np.append(parent.redcell, prmean > parent.chan2prob)
+    parent.probredcell = np.append(parent.probredcell, -1)
+    parent.redcell = np.append(parent.redcell, False)
     parent.notmerged = np.append(parent.notmerged, False)
+    
+    ### for GUI drawing
+    ycirc, xcirc = utils.circle(parent.stat[-1]["med"], parent.stat[-1]["radius"])
+    goodi = (
+            (ycirc >= 0)
+            & (xcirc >= 0)
+            & (ycirc < parent.ops["Ly"])
+            & (xcirc < parent.ops["Lx"])
+            )
+    parent.stat[-1]["ycirc"] = ycirc[goodi]
+    parent.stat[-1]["xcirc"] = xcirc[goodi]
+    
     # * add colors *
     masks.make_colors(parent)
     # recompute binned F
@@ -344,3 +331,11 @@ class LineEdit(QtGui.QLineEdit):
         key = self.key
         dstr = str(ops[key])
         self.setText(dstr)
+
+
+def apply(parent):
+    classval = float(parent.probedit.text())
+    iscell = parent.probcell > classval
+    masks.flip_for_class(parent, iscell)
+    parent.update_plot()
+    io.save_iscell(parent)
